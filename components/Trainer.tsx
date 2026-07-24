@@ -14,6 +14,7 @@ import {
   type ScaleId,
 } from "@/lib/music";
 import { VOICES, INSTRUMENTS, TIMBRES, instrumentTimbre, type TimbreId } from "@/lib/instruments";
+import { extractNotes } from "@/lib/extract";
 import { autoCorrelate } from "@/lib/pitch";
 import {
   CHORDS,
@@ -38,7 +39,21 @@ import {
 } from "@/lib/stats";
 
 const STATS_KEY = "flashnotes.stats";
+const CLIPS_KEY = "flashnotes.customMelodies";
 const todayStr = () => new Date().toISOString().slice(0, 10);
+
+interface CustomMelody {
+  id: string;
+  name: string;
+  notes: number[];
+}
+function coerceClips(raw: unknown): CustomMelody[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((m) => m && typeof m.id === "string" && typeof m.name === "string" && Array.isArray(m.notes))
+    .map((m) => ({ id: m.id, name: String(m.name).slice(0, 40), notes: m.notes.filter((n: unknown) => typeof n === "number") }))
+    .filter((m) => m.notes.length >= 3);
+}
 function formatDuration(ms: number): string {
   const min = Math.floor(ms / 60000);
   if (min < 1) return "<1m";
@@ -151,11 +166,15 @@ export default function Trainer() {
   const [score, setScore] = useState({ streak: 0, correct: 0, best: 0 });
   const [starting, setStarting] = useState(false);
   const [stats, setStatsState] = useState<Stats>(emptyStats);
+  const [customMelodies, setCustomMelodies] = useState<CustomMelody[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState("");
+  const customMeloRef = useRef<CustomMelody[]>([]);
 
   // Loop-critical mutable state (avoids stale closures + per-frame re-renders).
   const cfgRef = useRef(cfg);
   const seqRef = useRef<{ notes: number[]; idx: number } | null>(null);
-  const sessRef = useRef({ lastTarget: null as number | null, lastDrillId: "", inTuneSince: 0, cooldownUntil: 0, gateUntil: 0, running: false, presentedAt: 0 });
+  const sessRef = useRef({ lastTarget: null as number | null, lastDrillId: "", inTuneSince: 0, cooldownUntil: 0, gateUntil: 0, armed: true, running: false, presentedAt: 0 });
   const smoothRef = useRef<number | null>(null);
   const statsRef = useRef<Stats>(emptyStats());
   const streakRef = useRef(0);
@@ -196,6 +215,28 @@ export default function Trainer() {
     }
   }, [stats]);
 
+  // Load / persist imported clips (just the extracted note sequences — no audio).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CLIPS_KEY);
+      if (raw) {
+        const clips = coerceClips(JSON.parse(raw));
+        customMeloRef.current = clips;
+        setCustomMelodies(clips);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    customMeloRef.current = customMelodies;
+    try {
+      localStorage.setItem(CLIPS_KEY, JSON.stringify(customMelodies));
+    } catch {
+      /* ignore */
+    }
+  }, [customMelodies]);
+
   const commitStats = useCallback((next: Stats) => {
     statsRef.current = next;
     setStatsState(next);
@@ -208,6 +249,7 @@ export default function Trainer() {
     setStatsState(e);
     streakRef.current = 0;
   }, []);
+
 
   const setStatus = (text: string, cls = "") => {
     if (statusRef.current) {
@@ -265,6 +307,44 @@ export default function Trainer() {
   const promptTimbre = useCallback((): TimbreId => {
     const c = cfgRef.current;
     return c.mode === "sing" ? "voice" : instrumentTimbre(c.instrumentId);
+  }, []);
+
+  // Import an audio clip: decode + extract its melody line locally, save just the notes.
+  const importClip = useCallback(
+    async (file: File) => {
+      setImporting(true);
+      setImportMsg("Analyzing clip…");
+      try {
+        const ctx = ensureCtx();
+        const audio = await ctx.decodeAudioData(await file.arrayBuffer());
+        const ch = audio.getChannelData(0);
+        const maxSamp = Math.floor(audio.sampleRate * 25); // analyze up to 25s
+        const slice = ch.length > maxSamp ? ch.subarray(0, maxSamp) : ch;
+        await new Promise((r) => setTimeout(r, 20)); // let the "Analyzing…" message paint
+        const notes = extractNotes(slice, audio.sampleRate);
+        if (notes.length < 3) {
+          setImportMsg(
+            `Only ${notes.length} clear note${notes.length === 1 ? "" : "s"} found — try a simpler single-line melody (humming, whistling, or a solo instrument).`,
+          );
+          setImporting(false);
+          return;
+        }
+        const name = file.name.replace(/\.[^.]+$/, "").slice(0, 40) || "My clip";
+        const id = "custom-" + Date.now();
+        setCustomMelodies((prev) => [...prev, { id, name, notes }]);
+        setCfg((c) => ({ ...c, source: "melodies", pickId: id }));
+        setImportMsg(`Imported “${name}” — ${notes.length} notes. Press Start to practice it.`);
+      } catch {
+        setImportMsg("Couldn’t read that file. Try a WAV, MP3, or M4A.");
+      }
+      setImporting(false);
+    },
+    [ensureCtx],
+  );
+
+  const removeCustom = useCallback((id: string) => {
+    setCustomMelodies((prev) => prev.filter((m) => m.id !== id));
+    setCfg((c) => (c.pickId === id ? { ...c, pickId: "random" } : c));
   }, []);
 
   // Play a prompt tone AND gate the mic until it finishes (+ a short tail), so the
@@ -334,12 +414,13 @@ export default function Trainer() {
     } else if (c.source === "progressions") {
       next = buildProgressionSequence(pickDrill(PROGRESSIONS, c.pickId), keyRootMidi(c.keyPc, c.low, c.high));
     } else {
-      next = buildMelodySequence(pickDrill(MELODIES, c.pickId), c.keyPc, c.low, c.high);
+      next = buildMelodySequence(pickDrill([...MELODIES, ...customMeloRef.current], c.pickId), c.keyPc, c.low, c.high);
     }
 
     seqRef.current = { notes: next.notes, idx: 0 };
     sessRef.current.inTuneSince = 0;
     sessRef.current.gateUntil = 0;
+    sessRef.current.armed = true;
     sessRef.current.presentedAt = performance.now();
     setSeq(next);
     setStepIdx(0);
@@ -379,6 +460,9 @@ export default function Trainer() {
       sessRef.current.inTuneSince = 0;
       sessRef.current.cooldownUntil = now + 300; // debounce re-trigger
       sessRef.current.gateUntil = 0;
+      // Only a genuine repeat of the same note needs re-articulation; different notes
+      // arm immediately so a natural transition through them isn't blocked.
+      sessRef.current.armed = sref.notes[nextIdx] !== hitNote;
       sessRef.current.presentedAt = now; // start timing the next note
       setStepIdx(nextIdx);
       setStatus("✓ next…", "good");
@@ -400,6 +484,7 @@ export default function Trainer() {
       if (needleRef.current) needleRef.current.style.opacity = "0.25";
       if (detectedRef.current) detectedRef.current.innerHTML = '<span style="opacity:.6">listening…</span>';
       sessRef.current.inTuneSince = 0;
+      sessRef.current.armed = true; // a gap in the sound re-articulates the next note
       return;
     }
 
@@ -426,14 +511,27 @@ export default function Trainer() {
 
     const c = cfgRef.current;
     const centsTgt = (smooth - tgt) * 100;
+    const absC = Math.abs(centsTgt);
+    const within = absC <= c.tol;
     if (needleRef.current) {
       needleRef.current.style.opacity = "1";
       needleRef.current.style.left = 50 + needleOffset(centsTgt) + "%";
-      const within = Math.abs(centsTgt) <= c.tol;
-      needleRef.current.style.background = within ? "var(--good)" : Math.abs(centsTgt) < c.tol * 2 ? "var(--warn)" : "var(--bad)";
+      needleRef.current.style.background = within ? "var(--good)" : absC < c.tol * 2 ? "var(--warn)" : "var(--bad)";
     }
 
-    if (Math.abs(centsTgt) <= c.tol) {
+    // Repeated-note guard: after advancing within a sequence, require the pitch to leave
+    // the note before it can count again, so one sustained tone can't clear two identical
+    // adjacent steps. For different notes the pitch leaves naturally, so there's no friction.
+    if (!sessRef.current.armed) {
+      if (within) {
+        setStatus("Play it again ↻", "warn");
+        sessRef.current.inTuneSince = 0;
+        return;
+      }
+      sessRef.current.armed = true;
+    }
+
+    if (within) {
       if (sessRef.current.inTuneSince === 0) sessRef.current.inTuneSince = now;
       const held = now - sessRef.current.inTuneSince;
       if (held >= c.hold) {
@@ -443,7 +541,6 @@ export default function Trainer() {
       }
     } else {
       sessRef.current.inTuneSince = 0;
-      const absC = Math.abs(centsTgt);
       const amt = absC >= 100 ? (absC / 100).toFixed(1) + " semitones" : Math.round(absC) + "¢";
       setStatus(centsTgt < 0 ? `Flat by ${amt} — raise ▲` : `Sharp by ${amt} — lower ▼`);
     }
@@ -573,7 +670,8 @@ export default function Trainer() {
           ? Math.round(midiToFreq(current) * 10) / 10 + " Hz"
           : " ";
 
-  const currentList = drillList(cfg.source);
+  const melodyList = [...MELODIES, ...customMelodies];
+  const currentList = cfg.source === "melodies" ? melodyList : drillList(cfg.source);
 
   const tot = totals(stats);
   const hard = hardestPcs(stats, 3).slice(0, 3);
@@ -740,7 +838,7 @@ export default function Trainer() {
                   <option value="random">Random / mix</option>
                   {currentList.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.name}
+                      {d.id.startsWith("custom-") ? "★ " + d.name : d.name}
                     </option>
                   ))}
                 </select>
@@ -755,6 +853,39 @@ export default function Trainer() {
                   ))}
                 </select>
               </div>
+
+              {cfg.source === "melodies" && (
+                <div className="field" style={{ gridColumn: "1/-1" }}>
+                  <label>Import your own clip — stays on your device</label>
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    disabled={importing}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) importClip(f);
+                      e.target.value = "";
+                    }}
+                  />
+                  {importMsg && <div className="hint">{importMsg}</div>}
+                  {customMelodies.length > 0 && (
+                    <div className="clip-chips">
+                      {customMelodies.map((m) => (
+                        <span key={m.id} className="tough-chip">
+                          ★ {m.name} ({m.notes.length})
+                          <button className="mini-x" title="Remove" onClick={() => removeCustom(m.id)}>
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="hint">
+                    Best with a single clear melody line — humming, whistling, or a solo instrument. Nothing is uploaded; only the extracted notes are saved on this
+                    device.
+                  </div>
+                </div>
+              )}
             </>
           )}
 

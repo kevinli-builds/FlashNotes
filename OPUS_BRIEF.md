@@ -12,8 +12,9 @@ Roadmap of record. Status ledger first; details below.
 | Fix — mic-gate so the prompt tone can't self-trigger a hit | ✅ Shipped |
 | UX — nonlinear tuner: approach view + note landmarks + distance readout | ✅ Shipped |
 | Feature — voice types (sing) + instrument selection & synth timbres | ✅ Shipped |
-| P3 — User-supplied audio-clip practice (on-device only) | ▶ Next |
-| P2 — Interval recognition mode | ⬜ Backlog |
+| Fix — repeated adjacent notes need re-articulation (repeat guard) | ✅ Shipped |
+| P3 — User-supplied audio-clip practice (on-device only) | ✅ Shipped |
+| P2 — Interval recognition mode | ▶ Next |
 
 ("Shipped" = written + pushed. Vercel connection is a one-time manual step by Kevin.)
 
@@ -45,15 +46,28 @@ are transcriptions of public-domain works; chord voicings/progressions aren't
 copyrightable. A future "practice to a real song" feature must use clips the *user*
 provides, kept on-device (no upload, no redistribution).
 
-### P1 notes / known limits
+### P1 notes
 - Sequence builders live in `lib/repertoire.ts` (unit-tested). The step-advance loop is
   in `Trainer` (`onNoteHit`): each held note advances `seqRef.idx`; a 300ms debounce
   guards against one sustained note satisfying two steps.
-- **Repeated adjacent notes** (e.g. Ode to Joy's "E E") can be hard to separate — a
-  single sustained note may clear both after the debounce. A future fix could require the
-  pitch to drop out between identical steps. Acceptable for v1.
+- **Repeated adjacent notes — FIXED (repeat guard).** On advancing, `sessRef.armed` is
+  set false *only* when the next note equals the one just hit; the loop then won't count
+  it until the pitch leaves (a silence frame or an out-of-tolerance frame re-arms). Shows
+  "Play it again ↻". Different notes arm immediately, so a natural transition isn't
+  blocked. Verified live via synthetic-mic on a `[60,60,64]` clip: the repeat needed a
+  re-articulation, the different note flowed straight through.
 - Melodies are octave-centered into the user's range and transposable by key; the "Notes
   allowed" scale filter applies to single-note mode only.
+
+### Shipped (P3) — practice from your own clips
+`lib/extract.ts` (`extractNotes`, unit-tested): runs the autocorrelation detector over
+overlapping windows of a decoded clip, median-smooths the pitch track, and segments it
+into notes. In `Trainer`, a file input under the Melodies source decodes the audio locally
+(`AudioContext.decodeAudioData`, first 25s), extracts a note sequence, and adds it as a
+`★ custom` melody selectable in the "Which" dropdown. Only the extracted notes are saved
+(`localStorage flashnotes.customMelodies`) — **the audio never leaves the device and is
+never persisted**. Monophonic, so it's honest in-UI about needing a single clear line.
+Verified live: an imported `[60,60,64]` sequence persisted through reload and played.
 
 ## Shipped (P2) — Session stats + mic gate
 - **Stats** in `lib/stats.ts` (pure, 11 tests): per-pitch-class prompts/hits/skips/time,
@@ -84,7 +98,10 @@ provides, kept on-device (no upload, no redistribution).
   playback) actually *sound* like the chosen instrument, no samples bundled.
 
 ## Backlog
-- **P2 intervals:** play two notes, name/sing the interval.
+- **P2 intervals (next):** play two notes, name/sing the interval.
+- **P3+ clip polish:** show the extracted contour before practicing; let the user trim the
+  clip region; a "play-along with the original audio" mode (would need to keep the decoded
+  buffer in memory for the session, still no upload).
 
 ## Verify
 `npm run build` (typecheck) + `npm test`. Mic path is verified by hand + synthetic-tone

@@ -511,6 +511,59 @@ select {
   border-color: var(--bad);
   color: var(--bad);
 }
+input[type="file"] {
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 10px;
+  width: 100%;
+}
+input[type="file"]::file-selector-button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 12px;
+  margin-right: 10px;
+  cursor: pointer;
+  min-height: 36px;
+}
+input[type="file"]::file-selector-button:hover {
+  border-color: var(--accent);
+}
+.clip-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.clip-chips .tough-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mini-x {
+  padding: 0;
+  min-height: 20px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.mini-x:hover {
+  border-color: var(--bad);
+  color: var(--bad);
+}
 a {
   color: var(--accent);
 }
