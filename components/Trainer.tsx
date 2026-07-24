@@ -23,6 +23,26 @@ import {
   buildMelodySequence,
   type Sequence,
 } from "@/lib/repertoire";
+import {
+  emptyStats,
+  coerceStats,
+  recordResult,
+  withBestStreak,
+  addPracticeMs,
+  accuracy,
+  totals,
+  hardestPcs,
+  type Stats,
+} from "@/lib/stats";
+
+const STATS_KEY = "flashnotes.stats";
+const todayStr = () => new Date().toISOString().slice(0, 10);
+function formatDuration(ms: number): string {
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "<1m";
+  if (min < 60) return `${min}m`;
+  return `${Math.floor(min / 60)}h ${min % 60}m`;
+}
 
 type Mode = "instrument" | "sing";
 type Display = "name" | "solfege" | "staff" | "hidden";
@@ -135,12 +155,16 @@ export default function Trainer() {
   const [stepIdx, setStepIdx] = useState(0);
   const [score, setScore] = useState({ streak: 0, correct: 0, best: 0 });
   const [starting, setStarting] = useState(false);
+  const [stats, setStatsState] = useState<Stats>(emptyStats);
 
   // Loop-critical mutable state (avoids stale closures + per-frame re-renders).
   const cfgRef = useRef(cfg);
   const seqRef = useRef<{ notes: number[]; idx: number } | null>(null);
-  const sessRef = useRef({ lastTarget: null as number | null, lastDrillId: "", inTuneSince: 0, cooldownUntil: 0, running: false });
+  const sessRef = useRef({ lastTarget: null as number | null, lastDrillId: "", inTuneSince: 0, cooldownUntil: 0, gateUntil: 0, running: false, presentedAt: 0 });
   const smoothRef = useRef<number | null>(null);
+  const statsRef = useRef<Stats>(emptyStats());
+  const streakRef = useRef(0);
+  const sessionStartRef = useRef(0);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -156,6 +180,40 @@ export default function Trainer() {
   useEffect(() => {
     cfgRef.current = cfg;
   }, [cfg]);
+
+  // Load persisted stats once, then keep localStorage in sync.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STATS_KEY);
+      if (raw) {
+        const s = coerceStats(JSON.parse(raw));
+        statsRef.current = s;
+        setStatsState(s);
+      }
+    } catch {
+      /* corrupt or unavailable storage — start fresh */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+    } catch {
+      /* storage full or blocked — non-fatal */
+    }
+  }, [stats]);
+
+  const commitStats = useCallback((next: Stats) => {
+    statsRef.current = next;
+    setStatsState(next);
+  }, []);
+
+  const resetStats = useCallback(() => {
+    if (typeof window !== "undefined" && !window.confirm("Clear all your saved practice stats? This can't be undone.")) return;
+    const e = emptyStats();
+    statsRef.current = e;
+    setStatsState(e);
+    streakRef.current = 0;
+  }, []);
 
   const setStatus = (text: string, cls = "") => {
     if (statusRef.current) {
@@ -190,6 +248,20 @@ export default function Trainer() {
       o.stop(t + dur + 0.02);
     },
     [ensureCtx],
+  );
+
+  // Play a prompt tone AND gate the mic until it finishes (+ a short tail), so the
+  // reference tone leaking through the speakers can't be mistaken for a correct hit.
+  // Timing of the note starts when the gate lifts, not when the tone begins.
+  const playPrompt = useCallback(
+    (freq: number, dur: number) => {
+      playTone(freq, dur);
+      const until = performance.now() + dur * 1000 + 180;
+      sessRef.current.gateUntil = until;
+      sessRef.current.presentedAt = until;
+      sessRef.current.inTuneSince = 0;
+    },
+    [playTone],
   );
 
   const successChime = useCallback(
@@ -250,17 +322,26 @@ export default function Trainer() {
 
     seqRef.current = { notes: next.notes, idx: 0 };
     sessRef.current.inTuneSince = 0;
+    sessRef.current.gateUntil = 0;
+    sessRef.current.presentedAt = performance.now();
     setSeq(next);
     setStepIdx(0);
     setStatus(c.mode === "sing" ? "Sing this pitch…" : "Play this note…");
     if (detectedRef.current) detectedRef.current.innerHTML = "&nbsp;";
-    if (c.autoplay || c.mode === "sing") playTone(midiToFreq(next.notes[0]), 0.9);
-  }, [playTone, pickDrill]);
+    if (c.autoplay || c.mode === "sing") playPrompt(midiToFreq(next.notes[0]), 0.9);
+  }, [playPrompt, pickDrill]);
 
   const onNoteHit = useCallback(() => {
     const sref = seqRef.current;
     if (!sref || sref.idx >= sref.notes.length) return;
-    setScore((s) => ({ correct: s.correct + 1, streak: s.streak + 1, best: Math.max(s.best, s.streak + 1) }));
+    const now = performance.now();
+    const hitNote = sref.notes[sref.idx];
+    const ms = now - sessRef.current.presentedAt;
+
+    const newStreak = streakRef.current + 1;
+    streakRef.current = newStreak;
+    setScore((s) => ({ correct: s.correct + 1, streak: newStreak, best: Math.max(s.best, newStreak) }));
+    commitStats(withBestStreak(recordResult(statsRef.current, hitNote, true, ms, todayStr()), newStreak));
     if (needleRef.current) needleRef.current.style.opacity = "0";
 
     const nextIdx = sref.idx + 1;
@@ -270,7 +351,7 @@ export default function Trainer() {
       setStatus(sref.notes.length > 1 ? "✓ Complete!" : "✓ Nice!", "good");
       successChime(midiToFreq(sref.notes[sref.idx]));
       sref.idx = nextIdx; // park past the end
-      sessRef.current.cooldownUntil = performance.now() + 800;
+      sessRef.current.cooldownUntil = now + 800;
       sessRef.current.inTuneSince = 0;
       setTimeout(() => {
         if (sessRef.current.running) loadNext();
@@ -279,12 +360,14 @@ export default function Trainer() {
       // Advance to the next note in the sequence.
       sref.idx = nextIdx;
       sessRef.current.inTuneSince = 0;
-      sessRef.current.cooldownUntil = performance.now() + 300; // debounce re-trigger
+      sessRef.current.cooldownUntil = now + 300; // debounce re-trigger
+      sessRef.current.gateUntil = 0;
+      sessRef.current.presentedAt = now; // start timing the next note
       setStepIdx(nextIdx);
       setStatus("✓ next…", "good");
-      if (c.autoplay || c.mode === "sing") playTone(midiToFreq(sref.notes[nextIdx]), 0.7);
+      if (c.autoplay || c.mode === "sing") playPrompt(midiToFreq(sref.notes[nextIdx]), 0.7);
     }
-  }, [successChime, loadNext, playTone]);
+  }, [successChime, loadNext, playPrompt, commitStats]);
 
   const loop = useCallback(() => {
     rafRef.current = requestAnimationFrame(loop);
@@ -314,7 +397,15 @@ export default function Trainer() {
 
     const sref = seqRef.current;
     const tgt = sref && sref.idx < sref.notes.length ? sref.notes[sref.idx] : null;
-    if (tgt === null || now < sessRef.current.cooldownUntil) return;
+    if (tgt === null) return;
+    // While the prompt tone is sounding, don't match — otherwise the tone bleeding
+    // through the speakers into the mic reads as an instant (false) hit.
+    if (now < sessRef.current.gateUntil) {
+      if (needleRef.current) needleRef.current.style.opacity = "0.25";
+      setStatus("♪ playing prompt…");
+      return;
+    }
+    if (now < sessRef.current.cooldownUntil) return;
 
     const c = cfgRef.current;
     const centsTgt = (smooth - tgt) * 100;
@@ -359,6 +450,10 @@ export default function Trainer() {
   const stop = useCallback(() => {
     sessRef.current.running = false;
     setRunning(false);
+    if (sessionStartRef.current) {
+      commitStats(addPracticeMs(statsRef.current, performance.now() - sessionStartRef.current));
+      sessionStartRef.current = 0;
+    }
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
@@ -368,7 +463,7 @@ export default function Trainer() {
     if (needleRef.current) needleRef.current.style.opacity = "0";
     if (detectedRef.current) detectedRef.current.innerHTML = "&nbsp;";
     setStatus("Stopped");
-  }, []);
+  }, [commitStats]);
 
   const start = useCallback(async () => {
     try {
@@ -378,6 +473,8 @@ export default function Trainer() {
       setRunning(true);
       setStarting(false);
       smoothRef.current = null;
+      streakRef.current = 0;
+      sessionStartRef.current = performance.now();
       loop();
       loadNext();
     } catch (err) {
@@ -389,14 +486,19 @@ export default function Trainer() {
 
   const replay = useCallback(() => {
     const sref = seqRef.current;
-    if (sref && sref.idx < sref.notes.length) playTone(midiToFreq(sref.notes[sref.idx]), 0.9);
-  }, [playTone]);
+    if (sref && sref.idx < sref.notes.length) playPrompt(midiToFreq(sref.notes[sref.idx]), 0.9);
+  }, [playPrompt]);
 
   const skip = useCallback(() => {
     if (!sessRef.current.running) return;
+    const sref = seqRef.current;
+    if (sref && sref.idx < sref.notes.length) {
+      commitStats(recordResult(statsRef.current, sref.notes[sref.idx], false, 0, todayStr()));
+    }
+    streakRef.current = 0;
     setScore((s) => ({ ...s, streak: 0 }));
     loadNext();
-  }, [loadNext]);
+  }, [loadNext, commitStats]);
 
   // Keyboard: space = replay, right arrow = skip.
   useEffect(() => {
@@ -447,6 +549,10 @@ export default function Trainer() {
           : " ";
 
   const currentList = drillList(cfg.source);
+
+  const tot = totals(stats);
+  const hard = hardestPcs(stats, 3).slice(0, 3);
+  const recentDays = stats.sessions.slice(-14);
 
   return (
     <div className="wrap">
@@ -717,6 +823,88 @@ export default function Trainer() {
               </button>
             </div>
           </div>
+        </div>
+      </details>
+
+      <details className="settings">
+        <summary>Your progress</summary>
+        <div className="stats-body">
+          <div className="stat-tiles">
+            <div className="stat-tile">
+              <b>{tot.prompts}</b>
+              <span>notes practiced</span>
+            </div>
+            <div className="stat-tile">
+              <b>{tot.prompts ? Math.round(tot.accuracy * 100) + "%" : "–"}</b>
+              <span>accuracy</span>
+            </div>
+            <div className="stat-tile">
+              <b>{stats.bestStreak}</b>
+              <span>best streak</span>
+            </div>
+            <div className="stat-tile">
+              <b>{formatDuration(stats.totalMs)}</b>
+              <span>practice time</span>
+            </div>
+          </div>
+
+          {tot.prompts === 0 ? (
+            <div className="hint">No data yet — start practicing and your accuracy per note will appear here. Stats are saved on this device only.</div>
+          ) : (
+            <>
+              <div className="stat-section-title">Accuracy by note</div>
+              <div className="pc-bars">
+                {NOTE_NAMES.map((name, pc) => {
+                  const n = stats.byPc[pc];
+                  const acc = accuracy(n);
+                  const cls = n.prompts === 0 ? "empty" : acc >= 0.8 ? "good" : acc >= 0.5 ? "warn" : "bad";
+                  return (
+                    <div className="pc-bar" key={pc}>
+                      <span className="pc-name">{name}</span>
+                      <div className="pc-track">
+                        <div className={"pc-fill " + cls} style={{ width: (n.prompts ? acc * 100 : 0) + "%" }} />
+                      </div>
+                      <span className="pc-val">{n.prompts ? Math.round(acc * 100) + "%" : "–"}</span>
+                      <span className="pc-count">{n.prompts ? n.prompts + "×" : ""}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {hard.length > 0 && (
+                <>
+                  <div className="stat-section-title">Toughest notes</div>
+                  <div className="tough-row">
+                    {hard.map((pc) => (
+                      <span className="tough-chip" key={pc}>
+                        {NOTE_NAMES[pc]} · {Math.round(accuracy(stats.byPc[pc]) * 100)}%
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {recentDays.length > 1 && (
+                <>
+                  <div className="stat-section-title">Recent accuracy (per day)</div>
+                  <div className="day-bars">
+                    {recentDays.map((d, i) => {
+                      const acc = d.prompts ? d.hits / d.prompts : 0;
+                      return (
+                        <div className="day-bar" key={i} title={`${d.date}: ${d.hits}/${d.prompts} (${Math.round(acc * 100)}%)`}>
+                          <div className="day-fill" style={{ height: Math.max(4, acc * 100) + "%" }} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              <button className="reset-btn" onClick={resetStats}>
+                Reset stats
+              </button>
+            </>
+          )}
         </div>
       </details>
 

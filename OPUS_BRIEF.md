@@ -8,8 +8,9 @@ Roadmap of record. Status ledger first; details below.
 | P0 — single-note trainer (instrument + sing modes) | ✅ Shipped |
 | P0 — Next.js/Vercel migration from prototype, pure logic + tests | ✅ Shipped |
 | P1 — Repertoire: chords + progressions + public-domain melodies | ✅ Shipped |
-| P2 — Session stats (per-note accuracy, saved locally) | ▶ Next |
-| P2 — Interval recognition mode | ⬜ Backlog |
+| P2 — Session stats (per-note accuracy, saved locally) | ✅ Shipped |
+| Fix — mic-gate so the prompt tone can't self-trigger a hit | ✅ Shipped |
+| P2 — Interval recognition mode | ▶ Next |
 | P3 — User-supplied audio-clip practice (on-device only) | ⬜ Backlog |
 
 ("Shipped" = written + pushed. Vercel connection is a one-time manual step by Kevin.)
@@ -52,8 +53,20 @@ provides, kept on-device (no upload, no redistribution).
 - Melodies are octave-centered into the user's range and transposable by key; the "Notes
   allowed" scale filter applies to single-note mode only.
 
+## Shipped (P2) — Session stats + mic gate
+- **Stats** in `lib/stats.ts` (pure, 11 tests): per-pitch-class prompts/hits/skips/time,
+  rolling per-day history, total practice time, best streak. `coerceStats` defensively
+  repairs anything loaded from storage. The `Trainer` persists to `localStorage`
+  (`flashnotes.stats`), records a hit (with time-to-hit) or a skip per note, and renders a
+  "Your progress" panel: stat tiles, accuracy-by-note bars, toughest-notes chips, a daily
+  accuracy history, and a Reset button. Time-to-hit is measured from when the mic gate
+  lifts, not when the note is shown, so an autoplayed prompt doesn't inflate it.
+- **Mic gate (bug fix):** the reference tone bleeding through the speakers into the mic was
+  registering as an instant correct hit. `playPrompt` now sets `sessRef.gateUntil` =
+  tone end + 180ms; the detection loop refuses to match (shows "♪ playing prompt…") until
+  the gate lifts. Applies to autoplay in instrument mode too, not just sing mode.
+
 ## Backlog
-- **P2 stats:** localStorage histogram of which notes get missed most; accuracy over time.
 - **P2 intervals:** play two notes, name/sing the interval.
 - **P3 user clips:** drag in an audio file, loop a section, practice against it — all local.
 

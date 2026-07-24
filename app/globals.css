@@ -335,6 +335,142 @@ select {
   font-size: 12.5px;
   margin-top: 2px;
 }
+.stats-body {
+  padding: 4px 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+.stat-tile {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stat-tile b {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.stat-tile span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.stat-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.pc-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.pc-bar {
+  display: grid;
+  grid-template-columns: 34px 1fr 44px 34px;
+  align-items: center;
+  gap: 8px;
+}
+.pc-name {
+  font-weight: 700;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.pc-track {
+  height: 14px;
+  border-radius: 7px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.pc-fill {
+  height: 100%;
+  border-radius: 7px 0 0 7px;
+  transition: width 0.3s ease;
+}
+.pc-fill.good {
+  background: var(--good);
+}
+.pc-fill.warn {
+  background: var(--warn);
+}
+.pc-fill.bad {
+  background: var(--bad);
+}
+.pc-fill.empty {
+  background: transparent;
+}
+.pc-val {
+  text-align: right;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.pc-count {
+  text-align: right;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.tough-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tough-chip {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.day-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 60px;
+  padding: 4px 0;
+}
+.day-bar {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  background: var(--panel-2);
+  border-radius: 4px;
+  overflow: hidden;
+  min-width: 6px;
+}
+.day-fill {
+  width: 100%;
+  background: var(--accent);
+  border-radius: 4px 4px 0 0;
+  transition: height 0.3s ease;
+}
+.reset-btn {
+  align-self: flex-start;
+  padding: 9px 14px;
+  min-height: 42px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.reset-btn:hover {
+  border-color: var(--bad);
+  color: var(--bad);
+}
 a {
   color: var(--accent);
 }
