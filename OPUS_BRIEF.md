@@ -7,8 +7,8 @@ Roadmap of record. Status ledger first; details below.
 |---|---|
 | P0 — single-note trainer (instrument + sing modes) | ✅ Shipped |
 | P0 — Next.js/Vercel migration from prototype, pure logic + tests | ✅ Shipped |
-| P1 — Repertoire: chords + public-domain melody sequences | ▶ Next |
-| P2 — Session stats (per-note accuracy, saved locally) | ⬜ Backlog |
+| P1 — Repertoire: chords + progressions + public-domain melodies | ✅ Shipped |
+| P2 — Session stats (per-note accuracy, saved locally) | ▶ Next |
 | P2 — Interval recognition mode | ⬜ Backlog |
 | P3 — User-supplied audio-clip practice (on-device only) | ⬜ Backlog |
 
@@ -25,8 +25,10 @@ Flashcard loop over single notes:
   success chime, streak/correct/best. Keyboard: space = replay, → = skip.
 - Pure logic in `lib/music.ts` + `lib/pitch.ts`, both unit-tested (node env).
 
-## Next (P1) — Repertoire
-Longer practice beyond one random note. Three copyright-safe sources:
+## Shipped (P1) — Repertoire
+Longer practice beyond one random note. Implemented in `lib/repertoire.ts` (pure,
+tested) + a generalized `Trainer`: the target is now a **Sequence** of notes with a
+progress strip; single-note mode is a length-1 sequence. Three copyright-safe sources:
 1. **Chords** — prompt a chord (name + optional staff); the mic detects the notes. Because
    detection is monophonic, confirm chord tones by *arpeggiation* (play/sing the notes in
    turn) rather than simultaneously. `lib/repertoire.ts` holds chord interval shapes.
@@ -40,11 +42,15 @@ are transcriptions of public-domain works; chord voicings/progressions aren't
 copyrightable. A future "practice to a real song" feature must use clips the *user*
 provides, kept on-device (no upload, no redistribution).
 
-### P1 design notes
-- Generalize the target from `number` to a **sequence** of steps; single-note mode = a
-  length-1 sequence. Keep `lib/` pure: sequence builders + a "does this detected note
-  satisfy the current step" predicate live there and get tested.
-- Transpose melodies into the user's range; offer a key selector.
+### P1 notes / known limits
+- Sequence builders live in `lib/repertoire.ts` (unit-tested). The step-advance loop is
+  in `Trainer` (`onNoteHit`): each held note advances `seqRef.idx`; a 300ms debounce
+  guards against one sustained note satisfying two steps.
+- **Repeated adjacent notes** (e.g. Ode to Joy's "E E") can be hard to separate — a
+  single sustained note may clear both after the debounce. A future fix could require the
+  pitch to drop out between identical steps. Acceptable for v1.
+- Melodies are octave-centered into the user's range and transposable by key; the "Notes
+  allowed" scale filter applies to single-note mode only.
 
 ## Backlog
 - **P2 stats:** localStorage histogram of which notes get missed most; accuracy over time.

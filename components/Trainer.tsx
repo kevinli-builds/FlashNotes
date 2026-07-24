@@ -9,17 +9,32 @@ import {
   allowedMidis,
   pickNext,
   staffInfo,
+  NOTE_NAMES,
   type ScaleId,
 } from "@/lib/music";
 import { autoCorrelate } from "@/lib/pitch";
+import {
+  CHORDS,
+  PROGRESSIONS,
+  MELODIES,
+  keyRootMidi,
+  buildChordSequence,
+  buildProgressionSequence,
+  buildMelodySequence,
+  type Sequence,
+} from "@/lib/repertoire";
 
 type Mode = "instrument" | "sing";
 type Display = "name" | "solfege" | "staff" | "hidden";
+type Source = "single" | "chords" | "progressions" | "melodies";
 
 interface Cfg {
   mode: Mode;
   display: Display;
+  source: Source;
   scale: ScaleId;
+  pickId: string; // "random" or a specific drill id
+  keyPc: number; // 0-11, key root pitch class for chords/progressions/melodies
   low: number;
   high: number;
   tol: number;
@@ -36,6 +51,14 @@ const PRESETS: { label: string; value: string }[] = [
   { label: "Violin (G3–C6)", value: "55,84" },
   { label: "Flute (Bb3–G5)", value: "58,79" },
 ];
+
+const SINGLE_SEQ = (midi: number): Sequence => ({
+  title: "",
+  subtitle: "",
+  notes: [midi],
+  labels: [midiToName(midi)],
+  groupStarts: [0],
+});
 
 /** Declarative SVG staff — treble/bass chosen by register, with ledger lines. */
 function Staff({ midi }: { midi: number }) {
@@ -89,11 +112,17 @@ const clampRange = (lo: number, hi: number): [number, number] => {
   return [lo, hi];
 };
 
+const drillList = (source: Source) =>
+  source === "chords" ? CHORDS : source === "progressions" ? PROGRESSIONS : source === "melodies" ? MELODIES : [];
+
 export default function Trainer() {
   const [cfg, setCfg] = useState<Cfg>({
     mode: "instrument",
     display: "name",
+    source: "single",
     scale: "naturals",
+    pickId: "random",
+    keyPc: 0,
     low: 55,
     high: 76,
     tol: 35,
@@ -102,14 +131,15 @@ export default function Trainer() {
   });
   const [preset, setPreset] = useState("");
   const [running, setRunning] = useState(false);
-  const [target, setTarget] = useState<number | null>(null);
+  const [seq, setSeq] = useState<Sequence | null>(null);
+  const [stepIdx, setStepIdx] = useState(0);
   const [score, setScore] = useState({ streak: 0, correct: 0, best: 0 });
   const [starting, setStarting] = useState(false);
 
   // Loop-critical mutable state (avoids stale closures + per-frame re-renders).
   const cfgRef = useRef(cfg);
-  const targetRef = useRef<number | null>(null);
-  const sessRef = useRef({ lastTarget: null as number | null, inTuneSince: 0, cooldownUntil: 0, running: false });
+  const seqRef = useRef<{ notes: number[]; idx: number } | null>(null);
+  const sessRef = useRef({ lastTarget: null as number | null, lastDrillId: "", inTuneSince: 0, cooldownUntil: 0, running: false });
   const smoothRef = useRef<number | null>(null);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -142,72 +172,119 @@ export default function Trainer() {
     return audioCtxRef.current;
   }, []);
 
-  const playTone = useCallback((freq: number, dur = 0.8) => {
-    const ctx = ensureCtx();
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = "sine";
-    o.frequency.value = freq;
-    o.connect(g);
-    g.connect(ctx.destination);
-    const t = ctx.currentTime;
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.22, t + 0.02);
-    g.gain.setValueAtTime(0.22, t + dur - 0.1);
-    g.gain.linearRampToValueAtTime(0, t + dur);
-    o.start(t);
-    o.stop(t + dur + 0.02);
-  }, [ensureCtx]);
-
-  const successChime = useCallback((base: number) => {
-    const ctx = ensureCtx();
-    [0, 4, 7].forEach((semi, i) => {
+  const playTone = useCallback(
+    (freq: number, dur = 0.8) => {
+      const ctx = ensureCtx();
       const o = ctx.createOscillator();
       const g = ctx.createGain();
       o.type = "sine";
-      o.frequency.value = base * Math.pow(2, semi / 12);
+      o.frequency.value = freq;
       o.connect(g);
       g.connect(ctx.destination);
-      const t = ctx.currentTime + i * 0.06;
+      const t = ctx.currentTime;
       g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.16, t + 0.02);
-      g.gain.linearRampToValueAtTime(0, t + 0.35);
+      g.gain.linearRampToValueAtTime(0.22, t + 0.02);
+      g.gain.setValueAtTime(0.22, t + dur - 0.1);
+      g.gain.linearRampToValueAtTime(0, t + dur);
       o.start(t);
-      o.stop(t + 0.36);
-    });
-  }, [ensureCtx]);
+      o.stop(t + dur + 0.02);
+    },
+    [ensureCtx],
+  );
 
-  const nextTarget = useCallback(() => {
-    const c = cfgRef.current;
-    const pool = allowedMidis(c.low, c.high, c.scale);
-    const pick = pickNext(pool, sessRef.current.lastTarget);
-    if (pick === null) {
-      setStatus("No notes in this range/scale — widen the range.", "bad");
-      return;
+  const successChime = useCallback(
+    (base: number) => {
+      const ctx = ensureCtx();
+      [0, 4, 7].forEach((semi, i) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sine";
+        o.frequency.value = base * Math.pow(2, semi / 12);
+        o.connect(g);
+        g.connect(ctx.destination);
+        const t = ctx.currentTime + i * 0.06;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.16, t + 0.02);
+        g.gain.linearRampToValueAtTime(0, t + 0.35);
+        o.start(t);
+        o.stop(t + 0.36);
+      });
+    },
+    [ensureCtx],
+  );
+
+  // Pick a drill by id, or random (avoiding an immediate repeat).
+  const pickDrill = useCallback(<T extends { id: string }>(list: T[], pickId: string): T => {
+    if (pickId !== "random") {
+      const found = list.find((x) => x.id === pickId);
+      if (found) return found;
     }
-    sessRef.current.lastTarget = pick;
+    let choice: T;
+    do {
+      choice = list[Math.floor(Math.random() * list.length)];
+    } while (list.length > 1 && choice.id === sessRef.current.lastDrillId);
+    sessRef.current.lastDrillId = choice.id;
+    return choice;
+  }, []);
+
+  const loadNext = useCallback(() => {
+    const c = cfgRef.current;
+    let next: Sequence | null = null;
+
+    if (c.source === "single") {
+      const pool = allowedMidis(c.low, c.high, c.scale);
+      const pick = pickNext(pool, sessRef.current.lastTarget);
+      if (pick === null) {
+        setStatus("No notes in this range/scale — widen the range.", "bad");
+        return;
+      }
+      sessRef.current.lastTarget = pick;
+      next = SINGLE_SEQ(pick);
+    } else if (c.source === "chords") {
+      next = buildChordSequence(keyRootMidi(c.keyPc, c.low, c.high), pickDrill(CHORDS, c.pickId));
+    } else if (c.source === "progressions") {
+      next = buildProgressionSequence(pickDrill(PROGRESSIONS, c.pickId), keyRootMidi(c.keyPc, c.low, c.high));
+    } else {
+      next = buildMelodySequence(pickDrill(MELODIES, c.pickId), c.keyPc, c.low, c.high);
+    }
+
+    seqRef.current = { notes: next.notes, idx: 0 };
     sessRef.current.inTuneSince = 0;
-    targetRef.current = pick;
-    setTarget(pick);
+    setSeq(next);
+    setStepIdx(0);
     setStatus(c.mode === "sing" ? "Sing this pitch…" : "Play this note…");
     if (detectedRef.current) detectedRef.current.innerHTML = "&nbsp;";
-    if (c.autoplay || c.mode === "sing") playTone(midiToFreq(pick), 0.9);
-  }, [playTone]);
+    if (c.autoplay || c.mode === "sing") playTone(midiToFreq(next.notes[0]), 0.9);
+  }, [playTone, pickDrill]);
 
-  const onSuccess = useCallback(() => {
-    const t = targetRef.current;
-    if (t === null) return;
+  const onNoteHit = useCallback(() => {
+    const sref = seqRef.current;
+    if (!sref || sref.idx >= sref.notes.length) return;
     setScore((s) => ({ correct: s.correct + 1, streak: s.streak + 1, best: Math.max(s.best, s.streak + 1) }));
-    setStatus("✓ Nice!", "good");
     if (needleRef.current) needleRef.current.style.opacity = "0";
-    successChime(midiToFreq(t));
-    sessRef.current.cooldownUntil = performance.now() + 700;
-    targetRef.current = null;
-    sessRef.current.inTuneSince = 0;
-    setTimeout(() => {
-      if (sessRef.current.running) nextTarget();
-    }, 750);
-  }, [successChime, nextTarget]);
+
+    const nextIdx = sref.idx + 1;
+    const c = cfgRef.current;
+    if (nextIdx >= sref.notes.length) {
+      // Whole sequence complete.
+      setStatus(sref.notes.length > 1 ? "✓ Complete!" : "✓ Nice!", "good");
+      successChime(midiToFreq(sref.notes[sref.idx]));
+      sref.idx = nextIdx; // park past the end
+      sessRef.current.cooldownUntil = performance.now() + 800;
+      sessRef.current.inTuneSince = 0;
+      setTimeout(() => {
+        if (sessRef.current.running) loadNext();
+      }, 850);
+    } else {
+      // Advance to the next note in the sequence.
+      sref.idx = nextIdx;
+      sessRef.current.inTuneSince = 0;
+      sessRef.current.cooldownUntil = performance.now() + 300; // debounce re-trigger
+      setStepIdx(nextIdx);
+      setStatus("✓ next…", "good");
+      if (c.autoplay || c.mode === "sing") playTone(midiToFreq(sref.notes[nextIdx]), 0.7);
+    }
+  }, [successChime, loadNext, playTone]);
 
   const loop = useCallback(() => {
     rafRef.current = requestAnimationFrame(loop);
@@ -235,7 +312,8 @@ export default function Trainer() {
       detectedRef.current.innerHTML = "heard <b>" + midiToName(nearest) + "</b> (" + (centsNear >= 0 ? "+" : "") + centsNear + "¢)";
     }
 
-    const tgt = targetRef.current;
+    const sref = seqRef.current;
+    const tgt = sref && sref.idx < sref.notes.length ? sref.notes[sref.idx] : null;
     if (tgt === null || now < sessRef.current.cooldownUntil) return;
 
     const c = cfgRef.current;
@@ -253,7 +331,7 @@ export default function Trainer() {
       if (sessRef.current.inTuneSince === 0) sessRef.current.inTuneSince = now;
       const held = now - sessRef.current.inTuneSince;
       if (held >= c.hold) {
-        onSuccess();
+        onNoteHit();
       } else {
         setStatus("Hold it… (" + Math.ceil((c.hold - held) / 100) / 10 + "s)", "warn");
       }
@@ -261,7 +339,7 @@ export default function Trainer() {
       sessRef.current.inTuneSince = 0;
       setStatus(centsTgt > 0 ? "A bit sharp — lower it" : "A bit flat — raise it");
     }
-  }, [onSuccess]);
+  }, [onNoteHit]);
 
   const startMic = useCallback(async () => {
     const ctx = ensureCtx();
@@ -285,8 +363,8 @@ export default function Trainer() {
     if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     analyserRef.current = null;
-    targetRef.current = null;
-    setTarget(null);
+    seqRef.current = null;
+    setSeq(null);
     if (needleRef.current) needleRef.current.style.opacity = "0";
     if (detectedRef.current) detectedRef.current.innerHTML = "&nbsp;";
     setStatus("Stopped");
@@ -301,23 +379,24 @@ export default function Trainer() {
       setStarting(false);
       smoothRef.current = null;
       loop();
-      nextTarget();
+      loadNext();
     } catch (err) {
       setStarting(false);
       setStatus("Mic blocked — allow microphone access and retry.", "bad");
       console.error(err);
     }
-  }, [startMic, loop, nextTarget]);
+  }, [startMic, loop, loadNext]);
 
   const replay = useCallback(() => {
-    if (targetRef.current !== null) playTone(midiToFreq(targetRef.current), 0.9);
+    const sref = seqRef.current;
+    if (sref && sref.idx < sref.notes.length) playTone(midiToFreq(sref.notes[sref.idx]), 0.9);
   }, [playTone]);
 
   const skip = useCallback(() => {
     if (!sessRef.current.running) return;
     setScore((s) => ({ ...s, streak: 0 }));
-    nextTarget();
-  }, [nextTarget]);
+    loadNext();
+  }, [loadNext]);
 
   // Keyboard: space = replay, right arrow = skip.
   useEffect(() => {
@@ -336,18 +415,38 @@ export default function Trainer() {
   }, [replay, skip]);
 
   // Cleanup on unmount.
-  useEffect(() => () => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
-  }, []);
+  useEffect(
+    () => () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+    },
+    [],
+  );
 
   const update = (patch: Partial<Cfg>) => setCfg((c) => ({ ...c, ...patch }));
 
+  const isSeq = seq !== null && seq.notes.length > 1;
+  const current = seq !== null && stepIdx < seq.notes.length ? seq.notes[stepIdx] : null;
+  const hidden = cfg.display === "hidden";
+
   const promptLabel = !running
     ? "Press start to practice"
-    : cfg.mode === "sing"
-      ? "Match this tone"
-      : "Target note";
+    : isSeq
+      ? seq!.title
+      : cfg.mode === "sing"
+        ? "Match this tone"
+        : "Target note";
+
+  const subLine =
+    current !== null && isSeq
+      ? seq!.subtitle
+      : current !== null && hidden
+        ? "Listen and reproduce the tone"
+        : current !== null && cfg.display !== "staff"
+          ? Math.round(midiToFreq(current) * 10) / 10 + " Hz"
+          : " ";
+
+  const currentList = drillList(cfg.source);
 
   return (
     <div className="wrap">
@@ -361,18 +460,32 @@ export default function Trainer() {
       <div className="stage">
         <div className="prompt-label">{promptLabel}</div>
 
+        {isSeq && (
+          <div className="seq-row">
+            {seq!.labels.map((lbl, i) => (
+              <span
+                key={i}
+                className={"seq-chip" + (i === stepIdx ? " current" : i < stepIdx ? " done" : "")}
+                style={i > 0 && seq!.groupStarts.includes(i) ? { marginLeft: 14 } : undefined}
+              >
+                {hidden ? "•" : lbl}
+              </span>
+            ))}
+          </div>
+        )}
+
         <div>
-          {cfg.display === "staff" && target !== null ? (
-            <Staff midi={target} />
+          {cfg.display === "staff" && current !== null ? (
+            <Staff midi={current} />
           ) : (
             <div className="target-name">
-              {target === null ? (
+              {current === null ? (
                 "—"
-              ) : cfg.display === "hidden" ? (
+              ) : hidden ? (
                 <span style={{ color: "var(--muted)" }}>? ? ?</span>
               ) : (
                 (() => {
-                  const label = cfg.display === "solfege" ? midiToSolfege(target) : midiToName(target);
+                  const label = cfg.display === "solfege" ? midiToSolfege(current) : midiToName(current);
                   const oct = label.match(/-?\d+$/)![0];
                   const base = label.slice(0, label.length - oct.length);
                   return (
@@ -386,13 +499,7 @@ export default function Trainer() {
             </div>
           )}
         </div>
-        <div className="target-sub">
-          {target !== null && cfg.display === "hidden"
-            ? "Listen and reproduce the tone"
-            : target !== null && cfg.display !== "staff"
-              ? Math.round(midiToFreq(target) * 10) / 10 + " Hz"
-              : " "}
-        </div>
+        <div className="target-sub">{subLine}</div>
 
         <div className="tuner">
           <div className="tuner-track">
@@ -459,6 +566,56 @@ export default function Trainer() {
           </div>
 
           <div className="field" style={{ gridColumn: "1/-1" }}>
+            <label>Practice</label>
+            <div className="seg">
+              {(["single", "chords", "progressions", "melodies"] as Source[]).map((s) => (
+                <button
+                  key={s}
+                  className={cfg.source === s ? "on" : ""}
+                  onClick={() => update({ source: s, pickId: "random" })}
+                >
+                  {s === "single" ? "Single notes" : s === "chords" ? "Chords" : s === "progressions" ? "Progressions" : "Melodies"}
+                </button>
+              ))}
+            </div>
+            <div className="hint">
+              {cfg.source === "single"
+                ? "Random single notes from your range and scale."
+                : cfg.source === "chords"
+                  ? "Chords are arpeggiated — play each tone in turn (detection is one note at a time)."
+                  : cfg.source === "progressions"
+                    ? "Common chord progressions, one arpeggiated chord after another."
+                    : "Public-domain melodies, played note by note. Transposable to any key."}
+            </div>
+          </div>
+
+          {cfg.source !== "single" && (
+            <>
+              <div className="field">
+                <label>Which</label>
+                <select value={cfg.pickId} onChange={(e) => update({ pickId: e.target.value })}>
+                  <option value="random">Random / mix</option>
+                  {currentList.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>Key</label>
+                <select value={cfg.keyPc} onChange={(e) => update({ keyPc: +e.target.value })}>
+                  {NOTE_NAMES.map((n, i) => (
+                    <option key={n} value={i}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+
+          <div className="field" style={{ gridColumn: "1/-1" }}>
             <label>Show the note as</label>
             <div className="seg">
               {(["name", "solfege", "staff", "hidden"] as Display[]).map((d) => (
@@ -467,7 +624,7 @@ export default function Trainer() {
                 </button>
               ))}
             </div>
-            <div className="hint">&quot;Nothing&quot; plays the tone but hides the answer — pure ear training.</div>
+            <div className="hint">&quot;Nothing&quot; hides the answer — pure ear training.</div>
           </div>
 
           <div className="field">
@@ -523,7 +680,7 @@ export default function Trainer() {
             </select>
           </div>
           <div className="field">
-            <label>Notes allowed</label>
+            <label>Notes allowed (single-note mode)</label>
             <select value={cfg.scale} onChange={(e) => update({ scale: e.target.value as ScaleId })}>
               <option value="chromatic">Chromatic (all 12)</option>
               <option value="naturals">Naturals only (no sharps/flats)</option>
@@ -546,7 +703,7 @@ export default function Trainer() {
               Hold to confirm <span className="rangeval">{cfg.hold} ms</span>
             </label>
             <input type="range" min={0} max={1200} step={100} value={cfg.hold} onChange={(e) => update({ hold: +e.target.value })} />
-            <div className="hint">How long you must sustain the note.</div>
+            <div className="hint">How long you must sustain each note.</div>
           </div>
 
           <div className="field" style={{ gridColumn: "1/-1" }}>
@@ -566,7 +723,7 @@ export default function Trainer() {
       <div className="foot">
         Runs entirely in your browser — audio never leaves your device. Best in Chrome/Edge/Safari with a decent mic.
         <br />
-        Pitch detection works on one clear note at a time (single-note melodies, not chords).
+        Pitch detection is monophonic — one clear note at a time (chords are practiced by arpeggiating).
       </div>
     </div>
   );
