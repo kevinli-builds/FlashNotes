@@ -10,8 +10,10 @@ Roadmap of record. Status ledger first; details below.
 | P1 — Repertoire: chords + progressions + public-domain melodies | ✅ Shipped |
 | P2 — Session stats (per-note accuracy, saved locally) | ✅ Shipped |
 | Fix — mic-gate so the prompt tone can't self-trigger a hit | ✅ Shipped |
-| P2 — Interval recognition mode | ▶ Next |
-| P3 — User-supplied audio-clip practice (on-device only) | ⬜ Backlog |
+| UX — nonlinear tuner: approach view + note landmarks + distance readout | ✅ Shipped |
+| Feature — voice types (sing) + instrument selection & synth timbres | ✅ Shipped |
+| P3 — User-supplied audio-clip practice (on-device only) | ▶ Next |
+| P2 — Interval recognition mode | ⬜ Backlog |
 
 ("Shipped" = written + pushed. Vercel connection is a one-time manual step by Kevin.)
 
@@ -66,9 +68,23 @@ provides, kept on-device (no upload, no redistribution).
   tone end + 180ms; the detection loop refuses to match (shows "♪ playing prompt…") until
   the gate lifts. Applies to autoplay in instrument mode too, not just sing mode.
 
+## Shipped — Tuner + instruments/voices
+- **Nonlinear tuner** (`needleOffset` in `lib/music.ts`, unit-tested): position =
+  sign·50·|c|/(|c|+k), k=100. Near-linear near 0 (fine control ≈0.5%/cent) but never
+  saturates, so approach from several semitones out is visible instead of pinning at the
+  edge. The track now shows ±3 semitone **note-name landmarks** (positioned by the same
+  mapping), a wider in-tune zone, and the status gives a **distance readout** ("Flat by
+  2.5 semitones — raise ▲" far out, "Flat by 39¢" near). Verified live via a synthetic-mic
+  stub: needle traveled 14→23→36→50% as pitch closed in, then hit.
+- **Voices + instruments** (`lib/instruments.ts`, tested): sing mode shows a **Voice type**
+  selector (bass→soprano ranges); instrument mode shows an **Instrument** selector that
+  sets both the range and the **prompt timbre**. Timbres are additive-synthesis recipes
+  (harmonic partials + ADSR) turned into a Web Audio `PeriodicWave` — piano/pluck/strings/
+  clarinet(odd harmonics)/oboe/trumpet/trombone/reed/flute/voice. So prompts (incl. melody
+  playback) actually *sound* like the chosen instrument, no samples bundled.
+
 ## Backlog
 - **P2 intervals:** play two notes, name/sing the interval.
-- **P3 user clips:** drag in an audio file, loop a section, practice against it — all local.
 
 ## Verify
 `npm run build` (typecheck) + `npm test`. Mic path is verified by hand + synthetic-tone

@@ -9,9 +9,11 @@ import {
   allowedMidis,
   pickNext,
   staffInfo,
+  needleOffset,
   NOTE_NAMES,
   type ScaleId,
 } from "@/lib/music";
+import { VOICES, INSTRUMENTS, TIMBRES, instrumentTimbre, type TimbreId } from "@/lib/instruments";
 import { autoCorrelate } from "@/lib/pitch";
 import {
   CHORDS,
@@ -55,22 +57,14 @@ interface Cfg {
   scale: ScaleId;
   pickId: string; // "random" or a specific drill id
   keyPc: number; // 0-11, key root pitch class for chords/progressions/melodies
+  instrumentId: string; // selected instrument (range + prompt timbre) in instrument mode
+  voiceId: string; // selected voice type (range) in sing mode
   low: number;
   high: number;
   tol: number;
   hold: number;
   autoplay: boolean;
 }
-
-const PRESETS: { label: string; value: string }[] = [
-  { label: "Custom range", value: "" },
-  { label: "Voice / vocal (G3–E5)", value: "55,76" },
-  { label: "Guitar (E2–E4)", value: "40,64" },
-  { label: "Bass (E1–G3)", value: "28,55" },
-  { label: "Piano — middle (C3–C6)", value: "48,84" },
-  { label: "Violin (G3–C6)", value: "55,84" },
-  { label: "Flute (Bb3–G5)", value: "58,79" },
-];
 
 const SINGLE_SEQ = (midi: number): Sequence => ({
   title: "",
@@ -143,13 +137,14 @@ export default function Trainer() {
     scale: "naturals",
     pickId: "random",
     keyPc: 0,
+    instrumentId: "piano",
+    voiceId: "tenor",
     low: 55,
     high: 76,
     tol: 35,
     hold: 400,
     autoplay: true,
   });
-  const [preset, setPreset] = useState("");
   const [running, setRunning] = useState(false);
   const [seq, setSeq] = useState<Sequence | null>(null);
   const [stepIdx, setStepIdx] = useState(0);
@@ -173,7 +168,6 @@ export default function Trainer() {
   const rafRef = useRef<number | null>(null);
 
   const needleRef = useRef<HTMLDivElement | null>(null);
-  const zoneRef = useRef<HTMLDivElement | null>(null);
   const detectedRef = useRef<HTMLDivElement | null>(null);
   const statusRef = useRef<HTMLDivElement | null>(null);
 
@@ -231,37 +225,60 @@ export default function Trainer() {
   }, []);
 
   const playTone = useCallback(
-    (freq: number, dur = 0.8) => {
+    (freq: number, dur = 0.8, timbreId: TimbreId = "sine") => {
       const ctx = ensureCtx();
+      const timbre = TIMBRES[timbreId] ?? TIMBRES.sine;
+
+      // Build a PeriodicWave from the harmonic amplitudes (imag = sine coefficients).
+      const n = timbre.partials.length + 1;
+      const real = new Float32Array(n);
+      const imag = new Float32Array(n);
+      timbre.partials.forEach((amp, i) => {
+        imag[i + 1] = amp;
+      });
       const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = "sine";
+      o.setPeriodicWave(ctx.createPeriodicWave(real, imag));
       o.frequency.value = freq;
+
+      const g = ctx.createGain();
       o.connect(g);
       g.connect(ctx.destination);
+
+      // ADSR: attack -> decay to sustain -> hold -> release.
+      const peak = 0.22;
+      const sus = peak * timbre.sustain;
       const t = ctx.currentTime;
+      const dEnd = t + timbre.attack + timbre.decay;
+      const relStart = Math.max(dEnd, t + dur - timbre.release);
       g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.22, t + 0.02);
-      g.gain.setValueAtTime(0.22, t + dur - 0.1);
+      g.gain.linearRampToValueAtTime(peak, t + timbre.attack);
+      g.gain.linearRampToValueAtTime(sus, dEnd);
+      g.gain.setValueAtTime(sus, relStart);
       g.gain.linearRampToValueAtTime(0, t + dur);
       o.start(t);
-      o.stop(t + dur + 0.02);
+      o.stop(t + dur + 0.05);
     },
     [ensureCtx],
   );
+
+  // Timbre to use for the prompt: the chosen instrument, or a soft voice in sing mode.
+  const promptTimbre = useCallback((): TimbreId => {
+    const c = cfgRef.current;
+    return c.mode === "sing" ? "voice" : instrumentTimbre(c.instrumentId);
+  }, []);
 
   // Play a prompt tone AND gate the mic until it finishes (+ a short tail), so the
   // reference tone leaking through the speakers can't be mistaken for a correct hit.
   // Timing of the note starts when the gate lifts, not when the tone begins.
   const playPrompt = useCallback(
     (freq: number, dur: number) => {
-      playTone(freq, dur);
+      playTone(freq, dur, promptTimbre());
       const until = performance.now() + dur * 1000 + 180;
       sessRef.current.gateUntil = until;
       sessRef.current.presentedAt = until;
       sessRef.current.inTuneSince = 0;
     },
-    [playTone],
+    [playTone, promptTimbre],
   );
 
   const successChime = useCallback(
@@ -409,14 +426,12 @@ export default function Trainer() {
 
     const c = cfgRef.current;
     const centsTgt = (smooth - tgt) * 100;
-    const clamped = Math.max(-100, Math.min(100, centsTgt));
     if (needleRef.current) {
       needleRef.current.style.opacity = "1";
-      needleRef.current.style.left = 50 + clamped / 2 + "%";
+      needleRef.current.style.left = 50 + needleOffset(centsTgt) + "%";
       const within = Math.abs(centsTgt) <= c.tol;
       needleRef.current.style.background = within ? "var(--good)" : Math.abs(centsTgt) < c.tol * 2 ? "var(--warn)" : "var(--bad)";
     }
-    if (zoneRef.current) zoneRef.current.style.width = c.tol + "%";
 
     if (Math.abs(centsTgt) <= c.tol) {
       if (sessRef.current.inTuneSince === 0) sessRef.current.inTuneSince = now;
@@ -428,7 +443,9 @@ export default function Trainer() {
       }
     } else {
       sessRef.current.inTuneSince = 0;
-      setStatus(centsTgt > 0 ? "A bit sharp — lower it" : "A bit flat — raise it");
+      const absC = Math.abs(centsTgt);
+      const amt = absC >= 100 ? (absC / 100).toFixed(1) + " semitones" : Math.round(absC) + "¢";
+      setStatus(centsTgt < 0 ? `Flat by ${amt} — raise ▲` : `Sharp by ${amt} — lower ▼`);
     }
   }, [onNoteHit]);
 
@@ -531,6 +548,14 @@ export default function Trainer() {
   const current = seq !== null && stepIdx < seq.notes.length ? seq.notes[stepIdx] : null;
   const hidden = cfg.display === "hidden";
 
+  // Tuner landmarks: semitone ticks around the target, positioned by the same
+  // nonlinear mapping the needle uses, plus the in-tune tolerance zone.
+  const tolHalf = needleOffset(cfg.tol);
+  const ticks =
+    current !== null
+      ? [-3, -2, -1, 0, 1, 2, 3].map((s) => ({ s, pos: 50 + needleOffset(s * 100), label: midiToName(current + s) }))
+      : [];
+
   const promptLabel = !running
     ? "Press start to practice"
     : isSeq
@@ -609,14 +634,26 @@ export default function Trainer() {
 
         <div className="tuner">
           <div className="tuner-track">
-            <div className="tuner-zone" ref={zoneRef} />
-            <div className="tuner-center" />
+            {current !== null && <div className="tuner-zone" style={{ left: 50 - tolHalf + "%", width: 2 * tolHalf + "%" }} />}
+            {ticks.map((t) => (
+              <div key={t.s} className={"tuner-tick" + (t.s === 0 ? " target" : "")} style={{ left: t.pos + "%" }} />
+            ))}
+            {current === null && <div className="tuner-center" />}
             <div className="tuner-needle" ref={needleRef} style={{ left: "50%", opacity: 0 }} />
           </div>
-          <div className="tuner-labels">
-            <span>♭ flat</span>
-            <span>in tune</span>
-            <span>sharp ♯</span>
+          <div className="tuner-ticklabels">
+            {current === null ? (
+              <>
+                <span className="tick-edge left">♭ flat</span>
+                <span className="tick-edge right">sharp ♯</span>
+              </>
+            ) : (
+              ticks.map((t) => (
+                <span key={t.s} className={"tick-label" + (t.s === 0 ? " target" : "")} style={{ left: t.pos + "%" }}>
+                  {hidden ? "·" : t.label}
+                </span>
+              ))
+            )}
           </div>
         </div>
 
@@ -739,13 +776,12 @@ export default function Trainer() {
             </label>
             <input
               type="range"
-              min={36}
-              max={83}
+              min={24}
+              max={90}
               value={cfg.low}
               onChange={(e) => {
                 const [lo, hi] = clampRange(+e.target.value, cfg.high);
                 update({ low: lo, high: hi });
-                setPreset("");
               }}
             />
           </div>
@@ -755,36 +791,53 @@ export default function Trainer() {
             </label>
             <input
               type="range"
-              min={37}
+              min={30}
               max={96}
               value={cfg.high}
               onChange={(e) => {
                 const [lo, hi] = clampRange(cfg.low, +e.target.value);
                 update({ low: lo, high: hi });
-                setPreset("");
               }}
             />
           </div>
 
-          <div className="field">
-            <label>Instrument preset</label>
-            <select
-              value={preset}
-              onChange={(e) => {
-                setPreset(e.target.value);
-                if (e.target.value) {
-                  const [lo, hi] = e.target.value.split(",").map(Number);
-                  update({ low: lo, high: hi });
-                }
-              }}
-            >
-              {PRESETS.map((p) => (
-                <option key={p.label} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          {cfg.mode === "sing" ? (
+            <div className="field">
+              <label>Voice type</label>
+              <select
+                value={cfg.voiceId}
+                onChange={(e) => {
+                  const v = VOICES.find((x) => x.id === e.target.value);
+                  if (v) update({ voiceId: v.id, low: v.low, high: v.high });
+                }}
+              >
+                {VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name} ({midiToName(v.low)}–{midiToName(v.high)})
+                  </option>
+                ))}
+              </select>
+              <div className="hint">Sets your comfortable singing range.</div>
+            </div>
+          ) : (
+            <div className="field">
+              <label>Instrument</label>
+              <select
+                value={cfg.instrumentId}
+                onChange={(e) => {
+                  const inst = INSTRUMENTS.find((x) => x.id === e.target.value);
+                  if (inst) update({ instrumentId: inst.id, low: inst.low, high: inst.high });
+                }}
+              >
+                {INSTRUMENTS.map((inst) => (
+                  <option key={inst.id} value={inst.id}>
+                    {inst.name} ({midiToName(inst.low)}–{midiToName(inst.high)})
+                  </option>
+                ))}
+              </select>
+              <div className="hint">Sets the range and the sound of the prompt tone.</div>
+            </div>
+          )}
           <div className="field">
             <label>Notes allowed (single-note mode)</label>
             <select value={cfg.scale} onChange={(e) => update({ scale: e.target.value as ScaleId })}>

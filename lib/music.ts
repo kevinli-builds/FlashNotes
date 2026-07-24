@@ -77,6 +77,17 @@ export function pickNext(pool: number[], avoid: number | null, rng: () => number
   return pick;
 }
 
+/**
+ * Nonlinear tuner position in [-50, 50] (percent offset from the target line).
+ * Near-linear close to 0 for fine control, compressing as the error grows so a note
+ * several semitones away still moves the needle proportionally instead of pinning.
+ * `k` sets the near-center slope (50/k percent per cent); k=100 ≈ 0.5%/cent near 0.
+ */
+export function needleOffset(cents: number, k = 100): number {
+  const a = Math.abs(cents);
+  return Math.sign(cents) * ((50 * a) / (a + k));
+}
+
 /** Staff placement for a note: diatonic step + whether it needs a sharp. */
 export function staffInfo(m: number): { diatonic: number; isSharp: boolean } {
   const pc = pitchClass(m);

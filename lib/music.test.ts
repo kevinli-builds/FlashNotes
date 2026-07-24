@@ -9,6 +9,7 @@ import {
   pickNext,
   staffInfo,
   pitchClass,
+  needleOffset,
 } from "./music";
 
 describe("note math", () => {
@@ -73,6 +74,34 @@ describe("pickNext", () => {
 
   it("returns null for an empty pool", () => {
     expect(pickNext([], null)).toBeNull();
+  });
+});
+
+describe("needleOffset", () => {
+  it("is zero at the target and signed by direction", () => {
+    expect(needleOffset(0)).toBe(0);
+    expect(needleOffset(100)).toBeGreaterThan(0);
+    expect(needleOffset(-100)).toBeLessThan(0);
+  });
+
+  it("never saturates but stays within the half-track", () => {
+    expect(Math.abs(needleOffset(1200))).toBeLessThan(50);
+    expect(Math.abs(needleOffset(100000))).toBeLessThan(50);
+    expect(needleOffset(100)).toBeCloseTo(25); // one semitone -> quarter of the half-track
+  });
+
+  it("is monotonic — closer always reads closer", () => {
+    let prev = needleOffset(0);
+    for (let c = 10; c <= 1200; c += 10) {
+      const v = needleOffset(c);
+      expect(v).toBeGreaterThan(prev);
+      prev = v;
+    }
+  });
+
+  it("keeps meaningful travel near the target for micro-adjustment", () => {
+    // a 10-cent change near the target should move the needle a visible amount
+    expect(needleOffset(10) - needleOffset(0)).toBeGreaterThan(3);
   });
 });
 

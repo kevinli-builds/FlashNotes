@@ -159,10 +159,50 @@ h1 .dot {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 50%;
-  width: 0;
-  background: rgba(91, 140, 255, 0.14);
+  background: rgba(55, 214, 122, 0.16);
+}
+.tuner-tick {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--line);
+  transform: translateX(-0.5px);
+}
+.tuner-tick.target {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--muted);
+  opacity: 0.9;
+}
+.tuner-ticklabels {
+  position: relative;
+  height: 16px;
+  margin-top: 5px;
+}
+.tick-label {
+  position: absolute;
   transform: translateX(-50%);
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tick-label.target {
+  color: var(--text);
+  font-weight: 700;
+}
+.tick-edge {
+  position: absolute;
+  font-size: 11px;
+  color: var(--muted);
+}
+.tick-edge.left {
+  left: 0;
+}
+.tick-edge.right {
+  right: 0;
 }
 .tuner-needle {
   position: absolute;
