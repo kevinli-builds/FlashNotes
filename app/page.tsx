@@ -1,5 +1,5 @@
-import Trainer from "@/components/Trainer";
+import Practice from "@/components/Practice";
 
 export default function Home() {
-  return <Trainer />;
+  return <Practice />;
 }

@@ -14,7 +14,10 @@ Roadmap of record. Status ledger first; details below.
 | Feature — voice types (sing) + instrument selection & synth timbres | ✅ Shipped |
 | Fix — repeated adjacent notes need re-articulation (repeat guard) | ✅ Shipped |
 | P3 — User-supplied audio-clip practice (on-device only) | ✅ Shipped |
-| P2 — Interval recognition mode | ▶ Next |
+| P2 — Interval recognition (name-it-by-ear) + top-level tabs | ✅ Shipped |
+| Feature — song/run import framing + "Fine" detail control | ✅ Shipped |
+| Rename — display name FlashNotes → MusicFlash (repo unchanged) | ✅ Shipped |
+| Next — real-device mic pass; interval "sing it back" mode | ▶ Next |
 
 ("Shipped" = written + pushed. Vercel connection is a one-time manual step by Kevin.)
 
@@ -97,11 +100,29 @@ Verified live: an imported `[60,60,64]` sequence persisted through reload and pl
   clarinet(odd harmonics)/oboe/trumpet/trombone/reed/flute/voice. So prompts (incl. melody
   playback) actually *sound* like the chosen instrument, no samples bundled.
 
+## Shipped — Interval recognition + song import + rename
+- **App is now two top-level tabs** (`components/Practice.tsx` owns the header/title +
+  tabbar): **🎯 Match a pitch** (the mic `Trainer`, refactored to a fragment — no longer
+  owns the header/wrap) and **👂 Name the interval** (`IntervalTrainer`). Tone synth
+  extracted to `lib/synth.ts` (`playTimbre(ctx,…)`) and shared by both.
+- **Interval trainer** (`lib/intervals.ts`, tested): hear two notes (ascending/descending/
+  harmonic/random), pick the name from a button grid — **no mic**. Correct/wrong
+  highlighting, reveal, score (correct/total/streak/best), per-interval accuracy saved to
+  `localStorage flashnotes.intervalStats`. Keyboard: R replay, 1-9 pick. Verified live.
+- **Song/run import:** reframed the Melodies importer as "Import a song or clip — detect
+  its notes for a run", with a **Normal / Fine (fast runs)** detail toggle (Fine =
+  `{hop:512, minNoteMs:55, medianRadius:1}` to catch quick notes). Honest in-UI that
+  detection is monophonic (solo vocal / stem / hum, not a full mix).
+- **Rename:** display name is now **MusicFlash** (H1 + `<title>` + README). The repo,
+  folder, and package name stay `FlashNotes` (user asked only for the site title).
+
 ## Backlog
-- **P2 intervals (next):** play two notes, name/sing the interval.
-- **P3+ clip polish:** show the extracted contour before practicing; let the user trim the
-  clip region; a "play-along with the original audio" mode (would need to keep the decoded
-  buffer in memory for the session, still no upload).
+- **Interval "sing it back" mode:** reproduce the played interval with the mic (reuses the
+  sequence engine — a 2-note drill), as a complement to the name-it-by-ear quiz.
+- **P3+ clip polish:** show the extracted contour before practicing; trim the clip region;
+  a "play-along with the original audio" mode (keep the decoded buffer for the session,
+  still no upload).
+- **Real-device mic pass:** confirm detection feel + the repeat guard on a phone.
 
 ## Verify
 `npm run build` (typecheck) + `npm test`. Mic path is verified by hand + synthetic-tone

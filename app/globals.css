@@ -63,6 +63,76 @@ h1 .dot {
   color: var(--muted);
   font-size: 13px;
 }
+.tabbar {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 2px;
+}
+.tabbar button {
+  flex: 1;
+  font-weight: 600;
+  min-height: 50px;
+}
+.tabbar button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.answer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  width: min(520px, 100%);
+}
+.answer-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 10px;
+  min-height: 60px;
+}
+.answer-btn b {
+  font-size: 18px;
+}
+.answer-btn span {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.answer-btn.correct {
+  background: var(--good);
+  border-color: var(--good);
+  color: #05230f;
+}
+.answer-btn.correct span {
+  color: #05230f;
+}
+.answer-btn.wrong {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #2a0808;
+}
+.answer-btn.wrong span {
+  color: #2a0808;
+}
+.interval-toggle {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.interval-toggle button {
+  flex: 1;
+  min-width: 48px;
+  min-height: 42px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.interval-toggle button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 .stage {
   background: var(--panel);
   border: 1px solid var(--line);

@@ -1,17 +1,22 @@
-# FlashNotes
+# MusicFlash
 
-Musical flashcards for ear training and instrument practice. A note is prompted and the
-app **listens through your microphone**, advancing when it hears you play or sing the
-right pitch — flashcards, but for musical skills. Everything runs in the browser; audio
-never leaves your device.
+> Repo/package name is `FlashNotes`; the app's display name is **MusicFlash**.
+
+Musical flashcards for ear training and instrument practice. Two ways to train:
+**Match a pitch** (the app listens through your mic and advances when you play/sing the
+right note) and **Name the interval** (hear two notes, identify the interval by ear).
+Everything runs in the browser; audio never leaves your device.
 
 ## Features
-- **Two modes** — *Play it* (a note appears, play it on your instrument) and *Sing it*
+- **Match a pitch** — *Play it* (a note appears, play it on your instrument) and *Sing it*
   (a reference tone plays, match it with your voice).
+- **Name the interval** — an ear-training quiz: hear an interval (ascending, descending, or
+  harmonic) and pick its name; tracks per-interval accuracy.
 - **Practice** single notes, **chords**, **chord progressions**, or **melodies** — famous
   public-domain themes (Ode to Joy, Twinkle, Joy to the World…), transposable to any key.
-- **Import your own clip** — drop in an audio file; it extracts the melody line locally
-  (nothing is uploaded) and turns it into a drill.
+- **Import a song or clip** — drop in an audio file; it detects the notes locally (nothing
+  uploaded) and turns them into a practice run. Monophonic, so it works on a solo vocal,
+  a hum/whistle, or an isolated stem — with a "Fine" mode for fast runs.
 - **Ranges** — pick a **voice type** (bass→soprano) when singing or an **instrument**
   (piano, guitar, violin, clarinet, oboe, trumpet, sax…) when playing; the instrument also
   sets the **timbre** of the prompt tone, synthesized in the browser.

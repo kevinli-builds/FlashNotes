@@ -13,8 +13,9 @@ import {
   NOTE_NAMES,
   type ScaleId,
 } from "@/lib/music";
-import { VOICES, INSTRUMENTS, TIMBRES, instrumentTimbre, type TimbreId } from "@/lib/instruments";
+import { VOICES, INSTRUMENTS, instrumentTimbre, type TimbreId } from "@/lib/instruments";
 import { extractNotes } from "@/lib/extract";
+import { playTimbre } from "@/lib/synth";
 import { autoCorrelate } from "@/lib/pitch";
 import {
   CHORDS,
@@ -169,6 +170,7 @@ export default function Trainer() {
   const [customMelodies, setCustomMelodies] = useState<CustomMelody[]>([]);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState("");
+  const [importDetail, setImportDetail] = useState<"normal" | "fine">("normal");
   const customMeloRef = useRef<CustomMelody[]>([]);
 
   // Loop-critical mutable state (avoids stale closures + per-frame re-renders).
@@ -268,37 +270,7 @@ export default function Trainer() {
 
   const playTone = useCallback(
     (freq: number, dur = 0.8, timbreId: TimbreId = "sine") => {
-      const ctx = ensureCtx();
-      const timbre = TIMBRES[timbreId] ?? TIMBRES.sine;
-
-      // Build a PeriodicWave from the harmonic amplitudes (imag = sine coefficients).
-      const n = timbre.partials.length + 1;
-      const real = new Float32Array(n);
-      const imag = new Float32Array(n);
-      timbre.partials.forEach((amp, i) => {
-        imag[i + 1] = amp;
-      });
-      const o = ctx.createOscillator();
-      o.setPeriodicWave(ctx.createPeriodicWave(real, imag));
-      o.frequency.value = freq;
-
-      const g = ctx.createGain();
-      o.connect(g);
-      g.connect(ctx.destination);
-
-      // ADSR: attack -> decay to sustain -> hold -> release.
-      const peak = 0.22;
-      const sus = peak * timbre.sustain;
-      const t = ctx.currentTime;
-      const dEnd = t + timbre.attack + timbre.decay;
-      const relStart = Math.max(dEnd, t + dur - timbre.release);
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(peak, t + timbre.attack);
-      g.gain.linearRampToValueAtTime(sus, dEnd);
-      g.gain.setValueAtTime(sus, relStart);
-      g.gain.linearRampToValueAtTime(0, t + dur);
-      o.start(t);
-      o.stop(t + dur + 0.05);
+      playTimbre(ensureCtx(), freq, dur, timbreId);
     },
     [ensureCtx],
   );
@@ -321,7 +293,9 @@ export default function Trainer() {
         const maxSamp = Math.floor(audio.sampleRate * 25); // analyze up to 25s
         const slice = ch.length > maxSamp ? ch.subarray(0, maxSamp) : ch;
         await new Promise((r) => setTimeout(r, 20)); // let the "Analyzing…" message paint
-        const notes = extractNotes(slice, audio.sampleRate);
+        // "Fine" catches fast runs (shorter notes, tighter timing) at the cost of more blips.
+        const opts = importDetail === "fine" ? { hop: 512, minNoteMs: 55, medianRadius: 1 } : {};
+        const notes = extractNotes(slice, audio.sampleRate, opts);
         if (notes.length < 3) {
           setImportMsg(
             `Only ${notes.length} clear note${notes.length === 1 ? "" : "s"} found — try a simpler single-line melody (humming, whistling, or a solo instrument).`,
@@ -339,7 +313,7 @@ export default function Trainer() {
       }
       setImporting(false);
     },
-    [ensureCtx],
+    [ensureCtx, importDetail],
   );
 
   const removeCustom = useCallback((id: string) => {
@@ -678,14 +652,7 @@ export default function Trainer() {
   const recentDays = stats.sessions.slice(-14);
 
   return (
-    <div className="wrap">
-      <header>
-        <h1>
-          FlashNotes<span className="dot">.</span>
-        </h1>
-        <div className="tag">musical flashcards · listens through your mic</div>
-      </header>
-
+    <>
       <div className="stage">
         <div className="prompt-label">{promptLabel}</div>
 
@@ -856,7 +823,7 @@ export default function Trainer() {
 
               {cfg.source === "melodies" && (
                 <div className="field" style={{ gridColumn: "1/-1" }}>
-                  <label>Import your own clip — stays on your device</label>
+                  <label>Import a song or clip — detect its notes for a run</label>
                   <input
                     type="file"
                     accept="audio/*"
@@ -867,6 +834,14 @@ export default function Trainer() {
                       e.target.value = "";
                     }}
                   />
+                  <div className="seg" style={{ marginTop: 6 }}>
+                    <button className={importDetail === "normal" ? "on" : ""} onClick={() => setImportDetail("normal")}>
+                      Normal
+                    </button>
+                    <button className={importDetail === "fine" ? "on" : ""} onClick={() => setImportDetail("fine")}>
+                      Fine (fast runs)
+                    </button>
+                  </div>
                   {importMsg && <div className="hint">{importMsg}</div>}
                   {customMelodies.length > 0 && (
                     <div className="clip-chips">
@@ -881,7 +856,8 @@ export default function Trainer() {
                     </div>
                   )}
                   <div className="hint">
-                    Best with a single clear melody line — humming, whistling, or a solo instrument. Nothing is uploaded; only the extracted notes are saved on this
+                    Detection is monophonic — it works on <b>one clear line at a time</b>: a solo vocal, whistling/humming, or an isolated instrument stem. A full
+                    band mix won&apos;t transcribe cleanly. &quot;Fine&quot; captures faster runs. Nothing is uploaded; only the extracted notes are saved on this
                     device.
                   </div>
                 </div>
@@ -1097,6 +1073,6 @@ export default function Trainer() {
         <br />
         Pitch detection is monophonic — one clear note at a time (chords are practiced by arpeggiating).
       </div>
-    </div>
+    </>
   );
 }
