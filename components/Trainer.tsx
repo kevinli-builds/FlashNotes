@@ -16,6 +16,7 @@ import {
 import { VOICES, INSTRUMENTS, instrumentTimbre, type TimbreId } from "@/lib/instruments";
 import { extractNotes } from "@/lib/extract";
 import { playTimbre } from "@/lib/synth";
+import { INTERVALS } from "@/lib/intervals";
 import { autoCorrelate } from "@/lib/pitch";
 import {
   CHORDS,
@@ -64,7 +65,7 @@ function formatDuration(ms: number): string {
 
 type Mode = "instrument" | "sing";
 type Display = "name" | "solfege" | "staff" | "hidden";
-type Source = "single" | "chords" | "progressions" | "melodies";
+type Source = "single" | "chords" | "progressions" | "melodies" | "intervals";
 
 interface Cfg {
   mode: Mode;
@@ -387,6 +388,19 @@ export default function Trainer() {
       next = buildChordSequence(keyRootMidi(c.keyPc, c.low, c.high), pickDrill(CHORDS, c.pickId));
     } else if (c.source === "progressions") {
       next = buildProgressionSequence(pickDrill(PROGRESSIONS, c.pickId), keyRootMidi(c.keyPc, c.low, c.high));
+    } else if (c.source === "intervals") {
+      const drills = INTERVALS.map((iv) => ({ id: String(iv.semitones), iv }));
+      const { iv } = pickDrill(drills, c.pickId);
+      const hiMax = c.high - iv.semitones;
+      const root = hiMax > c.low ? c.low + Math.floor(Math.random() * (hiMax - c.low + 1)) : c.low;
+      const notes = [root, root + iv.semitones];
+      next = {
+        title: `${iv.short} — ${iv.name}`,
+        subtitle: c.mode === "sing" ? "sing both notes, low → high" : "play both notes, low → high",
+        notes,
+        labels: notes.map(midiToName),
+        groupStarts: [0],
+      };
     } else {
       next = buildMelodySequence(pickDrill([...MELODIES, ...customMeloRef.current], c.pickId), c.keyPc, c.low, c.high);
     }
@@ -645,7 +659,12 @@ export default function Trainer() {
           : " ";
 
   const melodyList = [...MELODIES, ...customMelodies];
-  const currentList = cfg.source === "melodies" ? melodyList : drillList(cfg.source);
+  const currentList =
+    cfg.source === "melodies"
+      ? melodyList
+      : cfg.source === "intervals"
+        ? INTERVALS.map((iv) => ({ id: String(iv.semitones), name: `${iv.short} — ${iv.name}` }))
+        : drillList(cfg.source);
 
   const tot = totals(stats);
   const hard = hardestPcs(stats, 3).slice(0, 3);
@@ -776,13 +795,21 @@ export default function Trainer() {
           <div className="field" style={{ gridColumn: "1/-1" }}>
             <label>Practice</label>
             <div className="seg">
-              {(["single", "chords", "progressions", "melodies"] as Source[]).map((s) => (
+              {(["single", "chords", "progressions", "melodies", "intervals"] as Source[]).map((s) => (
                 <button
                   key={s}
                   className={cfg.source === s ? "on" : ""}
                   onClick={() => update({ source: s, pickId: "random" })}
                 >
-                  {s === "single" ? "Single notes" : s === "chords" ? "Chords" : s === "progressions" ? "Progressions" : "Melodies"}
+                  {s === "single"
+                    ? "Single notes"
+                    : s === "chords"
+                      ? "Chords"
+                      : s === "progressions"
+                        ? "Progressions"
+                        : s === "melodies"
+                          ? "Melodies"
+                          : "Intervals"}
                 </button>
               ))}
             </div>
@@ -793,7 +820,9 @@ export default function Trainer() {
                   ? "Chords are arpeggiated — play each tone in turn (detection is one note at a time)."
                   : cfg.source === "progressions"
                     ? "Common chord progressions, one arpeggiated chord after another."
-                    : "Public-domain melodies, played note by note. Transposable to any key."}
+                    : cfg.source === "intervals"
+                      ? "Sing it back: hear an interval, then reproduce both notes low → high with your voice or instrument."
+                      : "Public-domain melodies, played note by note. Transposable to any key."}
             </div>
           </div>
 
@@ -810,16 +839,18 @@ export default function Trainer() {
                   ))}
                 </select>
               </div>
-              <div className="field">
-                <label>Key</label>
-                <select value={cfg.keyPc} onChange={(e) => update({ keyPc: +e.target.value })}>
-                  {NOTE_NAMES.map((n, i) => (
-                    <option key={n} value={i}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {cfg.source !== "intervals" && (
+                <div className="field">
+                  <label>Key</label>
+                  <select value={cfg.keyPc} onChange={(e) => update({ keyPc: +e.target.value })}>
+                    {NOTE_NAMES.map((n, i) => (
+                      <option key={n} value={i}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {cfg.source === "melodies" && (
                 <div className="field" style={{ gridColumn: "1/-1" }}>

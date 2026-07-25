@@ -17,7 +17,8 @@ Roadmap of record. Status ledger first; details below.
 | P2 — Interval recognition (name-it-by-ear) + top-level tabs | ✅ Shipped |
 | Feature — song/run import framing + "Fine" detail control | ✅ Shipped |
 | Rename — display name FlashNotes → MusicFlash (repo unchanged) | ✅ Shipped |
-| Next — real-device mic pass; interval "sing it back" mode | ▶ Next |
+| Feature — interval "sing it back" (Intervals practice source) | ✅ Shipped |
+| Next — real-device mic pass | ▶ Next |
 
 ("Shipped" = written + pushed. Vercel connection is a one-time manual step by Kevin.)
 
@@ -116,9 +117,16 @@ Verified live: an imported `[60,60,64]` sequence persisted through reload and pl
 - **Rename:** display name is now **MusicFlash** (H1 + `<title>` + README). The repo,
   folder, and package name stay `FlashNotes` (user asked only for the site title).
 
+## Shipped — Interval "sing it back"
+A fifth **Intervals** source in the Match-a-pitch `Trainer`: builds a 2-note sequence
+`[root, root+semitones]` from a chosen (or random) interval, rooted so the top note fits
+the range, and you reproduce both notes low→high through the normal tuner/hit/stats path.
+The Key field is hidden for this source (root is range-random). Complements the
+name-it-by-ear quiz in the Interval tab. Verified live (P5 → A3/E4, both notes hit →
+Complete). NB: the rAF loop is paused when the preview pane is hidden — shim
+`requestAnimationFrame`→`setTimeout` in the test harness to drive it (see [[house-conventions]]).
+
 ## Backlog
-- **Interval "sing it back" mode:** reproduce the played interval with the mic (reuses the
-  sequence engine — a 2-note drill), as a complement to the name-it-by-ear quiz.
 - **P3+ clip polish:** show the extracted contour before practicing; trim the clip region;
   a "play-along with the original audio" mode (keep the decoded buffer for the session,
   still no upload).
