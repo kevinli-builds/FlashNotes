@@ -18,6 +18,7 @@ Roadmap of record. Status ledger first; details below.
 | Feature — song/run import framing + "Fine" detail control | ✅ Shipped |
 | Rename — display name FlashNotes → MusicFlash (repo unchanged) | ✅ Shipped |
 | Feature — interval "sing it back" (Intervals practice source) | ✅ Shipped |
+| Fix — mobile: unlock AudioContext in the tap so intervals play on iOS | ✅ Shipped |
 | Next — real-device mic pass | ▶ Next |
 
 ("Shipped" = written + pushed. Vercel connection is a one-time manual step by Kevin.)
@@ -125,6 +126,15 @@ The Key field is hidden for this source (root is range-random). Complements the
 name-it-by-ear quiz in the Interval tab. Verified live (P5 → A3/E4, both notes hit →
 Complete). NB: the rAF loop is paused when the preview pane is hidden — shim
 `requestAnimationFrame`→`setTimeout` in the test harness to drive it (see [[house-conventions]]).
+
+## Mobile audio note
+`AudioContext` starts **suspended** on mobile (esp. iOS Safari) and only produces sound
+after `resume()` completes inside a user gesture. `lib/synth.ts` `unlockAudio(ctx)` does
+`await ctx.resume()` + a one-sample silent buffer; **call it from the tap handler and
+await it before scheduling notes.** The pitch `Trainer` is unlocked as a side effect of
+`getUserMedia`/`resume` in `startMic`; the `IntervalTrainer` had no mic step, so its
+`start` now awaits `unlockAudio(ensureCtx())` first (was silent on mobile before). Any new
+audio entry point that isn't behind the mic must do the same.
 
 ## Backlog
 - **P3+ clip polish:** show the extracted contour before practicing; trim the clip region;

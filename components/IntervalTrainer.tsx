@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { INTERVALS, DEFAULT_INTERVALS, DIRECTIONS, intervalBySemis, pickRandom, type Direction } from "@/lib/intervals";
 import { midiToFreq } from "@/lib/music";
-import { playTimbre } from "@/lib/synth";
+import { playTimbre, unlockAudio } from "@/lib/synth";
 
 const ISTATS_KEY = "flashnotes.intervalStats";
 interface IStat {
@@ -72,7 +72,7 @@ export default function IntervalTrainer() {
     [],
   );
 
-  const ensureCtx = () => {
+  const ensureCtx = (): AudioContext => {
     if (!ctxRef.current) {
       const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       ctxRef.current = new Ctx();
@@ -111,7 +111,10 @@ export default function IntervalTrainer() {
     playInterval(c);
   }, [enabled, dirMode, playInterval]);
 
-  const start = useCallback(() => {
+  const start = useCallback(async () => {
+    // Unlock/resume audio inside the tap gesture before scheduling any notes — required
+    // on mobile (iOS Safari) where the context otherwise stays suspended and silent.
+    await unlockAudio(ensureCtx());
     setScore({ correct: 0, total: 0, streak: 0, best: 0 });
     setRunning(true);
     runningRef.current = true;
